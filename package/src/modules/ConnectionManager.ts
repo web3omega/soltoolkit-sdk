@@ -196,7 +196,7 @@ export class ConnectionManager {
                 endpoints,
                 values.commitment || 'processed'
             );
-            const fastestEndpoint = endpointsSummary.sort((a, b) => b.speedMs - a.speedMs)[0].endpoint;
+            const fastestEndpoint = endpointsSummary.sort((a, b) => a.speedMs - b.speedMs)[0].endpoint;
             const highestSlotEndpoint = endpointsSummary.sort((a, b) => b.currentSlot - a.currentSlot)[0].endpoint;
             ConnectionManager._instance = new ConnectionManager(values, fastestEndpoint, highestSlotEndpoint);
         }
@@ -331,6 +331,7 @@ export class ConnectionManager {
         changeConn?: boolean;
         airdrop?: boolean;
     }): Promise<Connection> {
+
         if (!changeConn) {
             return this._connection;
         }
@@ -364,7 +365,7 @@ export class ConnectionManager {
                 case 'fastest': {
                     {
                         const endpointsSummary = await this.getEndpointsSummary();
-                        const fastestEndpoint = endpointsSummary.sort((a, b) => b.speedMs - a.speedMs)[0].endpoint;
+                        const fastestEndpoint = endpointsSummary.sort((a, b) => a.speedMs - b.speedMs)[0].endpoint;
                         if (this._connection.rpcEndpoint !== fastestEndpoint) {
                             this._logger.debug(`Changing connection to ${fastestEndpoint}`);
                             conn = new Connection(fastestEndpoint, this._config.config || this._config.commitment);
@@ -430,20 +431,55 @@ export class ConnectionManager {
      * @returns {Promise<IRPCSummary[]>} An array of IRPCSummary objects.
      */
     public static async getEndpointsSummary(endpoints: string[], commitment?: Commitment): Promise<IRPCSummary[]> {
-        const results = await Promise.all(
-            endpoints.map(async (endpoint) => {
-                const conn = new Connection(endpoint);
-                const start = Date.now();
-                const currentSlot = await conn.getSlot(commitment);
-                const end = Date.now();
-                const speedMs = end - start;
+        const promises = endpoints.map(async (endpoint) => {
+                try {
+                    const conn = new Connection(endpoint);
+                    const start = Date.now();
+                    const currentSlot = await conn.getSlot(commitment);
+                    const end = Date.now();
+                    const speedMs = end - start;
+                    return {
+                        endpoint,
+                        speedMs,
+                        currentSlot
+                    };
+                } catch (err) {
+                    //Placeholder Return with high speed and low slot
+                    return {
+                        endpoint,
+                        speedMs: 9999,
+                        currentSlot: 0
+                    };
+                }
+        });
+
+        const timeoutPromises = endpoints.map(async (endpoint) => {
+            //Timeout after 1 sec
+            await new Promise((resolve) => setTimeout(resolve, 1000))
+            
+            //Placeholder Return with high speed and low slot
+            return {
+                endpoint,
+                speedMs: 9999,
+                currentSlot: 0
+            };
+        });
+
+        const wrappedPromises = promises.map((promise, index) => {
+            const wrapperPromise = Promise.race([promise, timeoutPromises[index]]).catch(
+              (err) => {
+                //Placeholder Return first endpoint, with high speed and low slot
                 return {
-                    endpoint,
-                    speedMs,
-                    currentSlot
+                    endpoint: endpoints[0],
+                    speedMs: 9999,
+                    currentSlot: 0
                 };
-            })
-        );
+              }
+            );
+            return wrapperPromise;
+          });
+
+        const results = await Promise.all(wrappedPromises);
 
         return results;
     }
